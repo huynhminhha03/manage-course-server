@@ -18,6 +18,11 @@ class CommentController {
         try {
             const comments = await Comment.findById(req.params.id).lean()
 
+            if (!comments) {
+                return res
+                    .status(404)
+                    .json({ message: ' comment not found' })
+            }
             res.json(comments)
         } catch (error) {
             next(error)
@@ -94,7 +99,7 @@ class CommentController {
             // Tìm comment để kiểm tra quyền sở hữu của người dùng
             const comment = await Comment.findOne({
                 _id: id,
-                user_id,
+                creator: user_id,
             }).lean()
 
             if (!comment) {

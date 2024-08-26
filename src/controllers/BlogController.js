@@ -1,15 +1,114 @@
 const Blog = require('../models/Blog')
 const Comment = require('../models/Comment')
+const Topic = require('../models/Topic')
 
 class BlogController {
     //[GET]/blogs/
     async findAll(req, res, next) {
         try {
-            const blogs = await Blog.find({
+            // Lấy các tham số phân trang từ query
+            const page = parseInt(req.query.page) || 1
+            const limit = 10
+            const skip = (page - 1) * limit
+
+            // Tìm các blog với phân trang
+            const [blogs, total] = await Promise.all([
+                Blog.find({
+                    is_activated: true,
+                    is_locked: false,
+                })
+                    .skip(skip)
+                    .limit(limit)
+                    .lean()
+                    .populate({
+                        path: 'creator',
+                        select: 'name slug',
+                    }).sort({ createdAt: -1 }),
+                Blog.countDocuments({
+                    is_activated: true,
+                    is_locked: false,
+                }),
+            ])
+
+            res.json({
+                data: blogs,
+                total: total,
+                page: page,
+                limit: limit,
+            })
+        } catch (error) {
+            next(error)
+        }
+    }
+
+    //[GET] /blogs/blog_id/other-blogs
+    async findOtherBlogsByUser(req, res, next) {
+        try {
+            const { blog_id } = req.params
+
+            const blog = await Blog.findById(blog_id).lean()
+
+            const otherBlogs = await Blog.find({
                 is_activated: true,
                 is_locked: false,
-            }).lean()
-            res.json(blogs)
+                creator: blog.creator,
+                _id: { $ne: blog_id },
+            }).lean().sort({ createdAt: -1 })
+
+            res.json(otherBlogs)
+        } catch (error) {
+            next(error)
+        }
+    }
+
+        //[GET] /blogs/topics/:slug
+    async findByTopicSlug(req, res, next) {
+        try {
+            const { topic_slug } = req.params
+
+            let topic_id = null
+
+            if (topic_slug) {
+                const topic = await Topic.findOne({ slug: topic_slug })
+                if (topic) {
+                    topic_id = topic._id
+                } else {
+                    return res.status(400).json({ error: 'Topic not found' })
+                }
+            }
+
+            // Lấy các tham số phân trang từ query
+            const page = parseInt(req.query.page) || 1
+            const limit = 10
+            const skip = (page - 1) * limit
+
+            // Tìm các blog với phân trang
+            const [blogs, total] = await Promise.all([
+                Blog.find({
+                    topic_id,
+                    is_activated: true,
+                    is_locked: false,
+                })
+                    .skip(skip)
+                    .limit(limit)
+                    .lean()
+                    .populate({
+                        path: 'creator',
+                        select: 'name slug avatar',
+                    }).sort({ createdAt: -1 }),
+                Blog.countDocuments({
+                    topic_id,
+                    is_activated: true,
+                    is_locked: false,
+                }),
+            ])
+
+            res.json({
+                data: blogs,
+                total: total,
+                page: page,
+                limit: limit,
+            })
         } catch (error) {
             next(error)
         }
@@ -22,14 +121,19 @@ class BlogController {
                 _id: req.params.id,
                 is_locked: false,
                 is_activated: true,
-            }).lean()
+            })
+                .lean()
+                .populate({
+                    path: 'creator',
+                    select: 'name slug avatar desc',
+                })
             res.json(blogs)
         } catch (error) {
             next(error)
         }
     }
 
-    // [GET] /blogs/checked-all
+    // [GET] /blogs
     async findAllByAdmin(req, res, next) {
         try {
             const filter = {}
@@ -38,14 +142,28 @@ class BlogController {
                 filter.is_locked = req.query.is_locked
             }
 
-            const blogs = await Blog.find(filter).lean()
-            res.json(blogs)
+            // Lấy các tham số phân trang từ query
+            const page = parseInt(req.query.page) || 1
+            const limit = parseInt(req.query.limit) || 10
+            const skip = (page - 1) * limit
+
+            const [blogs, total] = await Promise.all([
+                Blog.find(filter).skip(skip).limit(limit).lean().sort({ createdAt: -1 }),
+                Blog.countDocuments(filter),
+            ])
+
+            res.json({
+                data: blogs,
+                total: total,
+                page: page,
+                limit: limit,
+            })
         } catch (error) {
             next(error)
         }
     }
 
-    // [GET] /blogs/checked-all/:id
+    // [GET] /blogs/:id
     async findOneByAdmin(req, res, next) {
         try {
             const blog = await Blog.findById(req.params.id).lean()
@@ -59,8 +177,8 @@ class BlogController {
         }
     }
 
-    // [PATCH] /blogs/checked-all/:id
-    async activateByAdmin(req, res, next) {
+    // [PATCH] /blogs/:id
+    async LockByAdmin(req, res, next) {
         const { is_locked } = req.body
 
         const updateFields = {
@@ -86,7 +204,7 @@ class BlogController {
         }
     }
 
-    // [DELETE] /blogs/checked-all/:id
+    // [DELETE] /blogs/:id
     async deleteByAdmin(req, res, next) {
         try {
             const blog = await Blog.findOneAndDelete({
@@ -102,19 +220,52 @@ class BlogController {
     }
 
     // GET /blogs/:blog_id/comments
-    async getParentCommentsForBlog(req, res, next) {
+    async getCommentsAndCountForBlog(req, res, next) {
         try {
+            const blog_id = req.params.blog_id
 
-            // Lấy tất cả comment cha (parent_id là null) cho blog cụ thể
-            const parentComments = await Comment.find({
-                target_id: req.params.blog_id,
-                target_type: 'Blog',
-                parent_id: null,
-            }).lean()
+            // Chạy cả hai hàm bất đồng bộ cùng lúc
+            const [parent_comments, total_comments] = await Promise.all([
+                Comment.find({
+                    target_id: blog_id,
+                    target_type: 'Blog',
+                    parent_id: null,
+                })
+                    .lean()
+                    .populate({
+                        path: 'creator',
+                        select: 'name slug avatar',
+                    })
+                    .sort({ createdAt: -1 }),
+                Comment.countDocuments({
+                    target_id: blog_id,
+                    target_type: 'Blog',
+                }),
+            ])
 
-            res.json(parentComments)
+            // Trả về kết quả
+            res.json({
+                parent_comments,
+                total_comments,
+            })
         } catch (error) {
             next(error)
+        }
+    }
+
+    // GET /blogs/:blog_id/count-comments
+    async countAllCommentsBlog(req, res, next) {
+        try {
+            const blog_id = req.params.blog_id
+
+            const total_comments = await Comment.countDocuments({
+                target_id: blog_id,
+                target_type: 'Blog',
+            })
+
+            res.json({ total_comments })
+        } catch (error) {
+            console.log(error)
         }
     }
 
@@ -123,14 +274,18 @@ class BlogController {
         try {
             const { blog_id, parent_id } = req.params
 
-            console.log(req.params)
             // Lấy tất cả comment con của một comment cha cụ thể
-
             const replies = await Comment.find({
                 target_id: blog_id,
                 target_type: 'Blog',
                 parent_id,
-            }).lean()
+            })
+                .lean()
+                .populate({
+                    path: 'creator',
+                    select: 'name slug avatar',
+                })
+                .sort({ createdAt: -1 })
 
             res.json(replies)
         } catch (error) {
@@ -138,6 +293,22 @@ class BlogController {
         }
     }
 
+    async countAllRepliesComment(req, res, next) {
+        try {
+            const { blog_id, parent_id } = req.params
+
+            // Lấy tất cả comment con của một comment cha cụ thể
+            const count = await Comment.countDocuments({
+                target_id: blog_id,
+                target_type: 'Blog',
+                parent_id,
+            }).lean()
+
+            res.json({ count })
+        } catch (error) {
+            next(error)
+        }
+    }
 }
 
 module.exports = new BlogController()

@@ -1,6 +1,6 @@
 const User = require('../models/User')
 const Role = require('../models/Role')
-const { hashPassword, checkPassword } = require('../utils/authUtils') // Đảm bảo đường dẫn đúng
+const { hashPassword, checkPassword } = require('../utils/authUtils') 
 const createError = require('http-errors')
 const { authenticate } = require('../services/authService')
 const nodemailer = require('nodemailer')
@@ -146,13 +146,12 @@ class AuthController {
         try {
             const { email, password } = req.body
 
-            
             // Tìm người dùng theo email
             const user = await User.findOne({ email })
             if (!user) {
                 return res
                     .status(401)
-                    .json({ message: 'Invalid email or password' })
+                    .json({ message: 'Invalid email!!!' })
             }
 
             // Kiểm tra mật khẩu
@@ -160,7 +159,7 @@ class AuthController {
             if (!isMatch) {
                 return res
                     .status(401)
-                    .json({ message: 'Invalid email or password' })
+                    .json({ message: 'Invalid email or password!!!' })
             }
 
             // Sinh token (đã thực hiện trong authenticate)
@@ -170,6 +169,39 @@ class AuthController {
             next(error)
         }
     }
+
+    async loginByAdmin(req, res, next) {
+        try {
+            const { email, password } = req.body
+            
+            // Tìm người dùng theo email
+            const user = await User.findOne({ email })
+            if (!user) {
+                return res
+                    .status(401)
+                    .json({ message: 'Invalid email!!!' })
+            }
+
+
+            // Kiểm tra mật khẩu
+            const isMatch = await checkPassword(password, user.password)
+            if (!isMatch) {
+                return res
+                    .status(401)
+                    .json({ message: 'Invalid email or password!!!' })
+            }
+
+            const roleUser = await Role.findById(user.role_id).lean()
+            if (roleUser.name !== 'isAdmin' || roleUser.name !== 'isStaff') {
+                const { token } = await authenticate(email, password)
+                return res.json({ token })
+            }
+            res.status(401).json({ message: 'No authorize' })
+        } catch (error) {
+            next(error)
+        }
+    }
+
 }
 
 module.exports = new AuthController()

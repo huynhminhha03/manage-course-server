@@ -6,6 +6,7 @@ const authRouter = require('./auth')
 const lessonRouter = require('./lessons') 
 const currentUserRouter = require('./currentUser') 
 const commentRouter = require('./comments') 
+const topicRouter = require('./topics') 
 
 const apiUserRouter = require('./api/apiUsers')
 const apiCourseRouter = require('./api/apiCourses')
@@ -32,6 +33,7 @@ function route(app) {
     app.use('/auth', authRouter)
     app.use('/lessons', lessonRouter)
     app.use('/comments', commentRouter)
+    app.use('/topics', topicRouter)
     app.use('/', currentUserRouter)
 
 }

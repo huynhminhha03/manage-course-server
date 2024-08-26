@@ -1,10 +1,6 @@
 const Lesson = require('../models/Lesson')
 const Comment = require('../models/Comment')
 
-const {
-    createComment,
-    
-} = require('../services/commentService')
 
 class LessonController {
 
@@ -109,11 +105,6 @@ class LessonController {
         }
     }
 
-    // POST /lessons/:lesson_id/comments/
-    async createCommentForLesson(req, res, next) {
-        const { lesson_id, parent_id } = req.params
-        await createComment(req, res, next, lesson_id, parent_id, 'Lesson')
-    }
 }
 
 module.exports = new LessonController()

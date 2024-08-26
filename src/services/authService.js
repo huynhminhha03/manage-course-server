@@ -34,7 +34,7 @@ async function authenticate(email, password) {
     const token = jwt.sign(
         { id: user._id, role: roleUser.name },
         process.env.ACCESS_TOKEN_SECRET,
-        { expiresIn: '5h' }
+        { expiresIn: '100h' }
     )
 
     return { token }

@@ -2,12 +2,22 @@ const Blog = require('../models/Blog')
 const Course = require('../models/Course')
 const Lesson = require('../models/Lesson')
 const User = require('../models/User')
+const Topic = require('../models/Topic')
+const {
+    uploadMedia,
+    getOptimizedUrl,
+    deleteMedia,
+} = require('../config/cloudinary')
+
+const { formatPublicId } = require('../utils/cloudinaryUtils')
 
 class MeController {
     // [GET] /current-user
     async getCurrentUser(req, res, next) {
         try {
-            const user = await User.findById(req.user.id).lean()
+            const user = await User.findById(req.user.id)
+                .lean()
+                .populate('role_id')
             if (!user) {
                 return res.status(404).json({ message: 'User not found' })
             }
@@ -21,13 +31,13 @@ class MeController {
     async updateCurrentUser(req, res, next) {
         try {
             const { name, slug, avatar, desc } = req.body
-            const userId = req.user.id
+            const user_id = req.user.id
 
             // Kiểm tra slug nếu có
             if (slug) {
                 const existingSlugUser = await User.findOne({
                     slug,
-                    _id: { $ne: userId },
+                    _id: { $ne: user_id },
                 })
                 if (existingSlugUser) {
                     return res
@@ -38,7 +48,7 @@ class MeController {
 
             // Cập nhật thông tin người dùng
             const user = await User.findByIdAndUpdate(
-                userId,
+                user_id,
                 {
                     name,
                     slug,
@@ -75,7 +85,9 @@ class MeController {
     // [GET] /my-courses
     async findMyCourses(req, res, next) {
         try {
-            const courses = await Course.find({ creator: req.user.id }).lean()
+            const courses = await Course.find({ creator: req.user.id })
+                .lean()
+                .sort({ createdAt: -1 })
             if (!courses) {
                 return res.status(404).json({ message: 'Course not found' })
             }
@@ -105,27 +117,47 @@ class MeController {
     // [POST] /my-courses
     async createMyCourse(req, res, next) {
         try {
-            const { title, image_url, desc, is_activated, price } = req.body
+            const { title, desc, start_time, price, isFree } = req.body
+
+            const imageFilePath = req.file.path // Đường dẫn tới file hình ảnh/video đã được lưu tạm thời
+            const publicId = `courses/${formatPublicId(title).replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`
+
+            // Upload hình ảnh/video lên Cloudinary
+            await uploadMedia(imageFilePath, publicId)
+
+            // Lấy URL tối ưu hóa của hình ảnh/video
+            const optimizedUrl = getOptimizedUrl(publicId)
 
             const course = new Course({
                 title,
-                image_url,
+                image_url: optimizedUrl,
                 desc,
-                is_activated,
+                start_time,
                 price,
+                isFree,
                 creator: req.user.id,
             })
             const savedCourse = await course.save()
             res.status(201).json(savedCourse)
         } catch (error) {
-            next(error)
+            res.status(500).json({
+                error: 'An error occurred',
+                details: error.message,
+            })
         }
     }
 
     // [PATCH] /my-courses/:id
     async updateMyCourse(req, res, next) {
-        const { title, image_url, desc, price } = req.body
-        const updateFields = { title, image_url, desc, price }
+        const { title, image_url, desc, price, isFree, start_time } = req.body
+        const updateFields = {
+            title,
+            image_url,
+            desc,
+            price,
+            isFree,
+            start_time,
+        }
 
         try {
             const course = await Course.findOneAndUpdate(
@@ -153,13 +185,19 @@ class MeController {
     // [DELETE] /my-courses/:id
     async deleteMyCourse(req, res, next) {
         try {
-            const course = await Course.findOneAndDelete({
-                creator: req.user.id,
-                _id: req.params.id,
-            }).lean()
+            const course = await Course.findOneAndUpdate(
+                {
+                    creator: req.user.id,
+                    _id: req.params.id,
+                },
+                {
+                    is_activated: false,
+                }
+            ).lean()
             if (!course) {
                 return res.status(404).json({ message: 'Course not found' })
             }
+
             res.status(204).end()
         } catch (error) {
             next(error)
@@ -275,13 +313,24 @@ class MeController {
     // [GET] /my-blogs
     async findMyBlogs(req, res, next) {
         try {
-            const blogs = await Blog.find({ creator: req.user.id }).lean()
-            if (!blogs) {
-                return res.status(404).json({ message: 'Blog not found' })
-            }
-            console.log(blogs)
-            res.json(blogs)
+            const user_id = req.user.id
+
+            // Tạo các promises cho việc tìm danh sách blog và đếm số lượng blog
+            const [blogs, blogCount] = await Promise.all([
+                Blog.find({ creator: user_id, is_activated: true })
+                    .lean()
+                    .populate('creator', 'name')
+                    .sort({ updatedAt: -1 }),
+                Blog.countDocuments({ creator: user_id, is_activated: true }),
+            ])
+
+            // Trả về danh sách blog cùng số lượng
+            res.json({
+                blogs,
+                blogCount,
+            })
         } catch (error) {
+            console.error('Error fetching blogs:', error)
             next(error)
         }
     }
@@ -292,7 +341,10 @@ class MeController {
             const blogs = await Blog.findOne({
                 creator: req.user.id,
                 _id: req.params.id,
-            }).lean()
+                is_activated: true,
+            })
+                .lean()
+                .populate('topic_id', 'slug')
             if (!blogs) {
                 return res.status(404).json({ message: 'Blog not found' })
             }
@@ -306,13 +358,32 @@ class MeController {
     // [POST] /my-blogs
     async createMyBlog(req, res, next) {
         try {
-            const { title, content } = req.body
+            const { title, content, desc, topic_slug } = req.body
+
+            let topic_id = null
+
+            if (topic_slug) {
+                const topic = await Topic.findOne({ slug: topic_slug })
+                if (topic) {
+                    topic_id = topic._id
+                } else {
+                    return res.status(400).json({ error: 'Topic not found' })
+                }
+            }
+
+            // Tạo một đối tượng blog mới
             const blog = new Blog({
                 title,
+                desc,
                 content,
+                topic_id,
                 creator: req.user.id,
             })
+
+            // Lưu blog vào cơ sở dữ liệu
             const savedBlog = await blog.save()
+
+            // Trả về blog đã lưu
             res.status(201).json(savedBlog)
         } catch (error) {
             next(error)
@@ -321,8 +392,20 @@ class MeController {
 
     // [PATCH] /my-blogs/:id
     async updateMyBlog(req, res, next) {
-        const { title, content, is_activated } = req.body
-        const updateFields = { title, content, is_activated }
+        const { title, desc, content, topic_slug } = req.body
+
+        let topic_id = null
+
+        if (topic_slug) {
+            const topic = await Topic.findOne({ slug: topic_slug })
+            if (topic) {
+                topic_id = topic._id
+            } else {
+                return res.status(400).json({ error: 'Topic not found' })
+            }
+        }
+
+        const updateFields = { title, desc, content, topic_id }
 
         try {
             const blog = await Blog.findOneAndUpdate(
@@ -350,13 +433,20 @@ class MeController {
     // [DELETE] /my-blogs/:id
     async deleteMyBlog(req, res, next) {
         try {
-            const blog = await Blog.findOneAndDelete({
-                creator: req.user.id,
-                _id: req.params.id,
-            }).lean()
+            const blog = await Blog.findOneAndUpdate(
+                {
+                    creator: req.user.id,
+                    _id: req.params.id,
+                },
+                {
+                    is_activated: false,
+                }
+            ).lean()
+
             if (!blog) {
-                return res.status(404).json({ message: 'Course not found' })
+                return res.status(404).json({ message: 'Blog not found' })
             }
+
             res.status(204).end()
         } catch (error) {
             next(error)

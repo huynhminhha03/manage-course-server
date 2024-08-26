@@ -13,7 +13,7 @@ function authToken(req, res, next) {
             return res.status(403).json({ message: 'Invalid token' })
         }
         console.log(user)
-        req.user = user // lưu thông tin user từ token vào request object
+        req.user = user 
         next()
     })
 }

@@ -11,7 +11,7 @@ const { authRole } = require('../middlewares/authRole')
 //Mangage blog by admin, staff
 router.get('/', authToken, authRole(['isAdmin', 'isStaff']), blogController.findAllByAdmin)
 router.get('/:id', authToken, authRole(['isAdmin', 'isStaff']), blogController.findOneByAdmin)
-router.patch('/:id', authToken, authRole(['isAdmin', 'isStaff']), blogController.activateByAdmin)
+router.patch('/:id', authToken, authRole(['isAdmin', 'isStaff']), blogController.LockByAdmin)
 router.delete('/:id', authToken, authRole(['isAdmin']), blogController.deleteByAdmin)
 
 

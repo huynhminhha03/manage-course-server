@@ -1,4 +1,5 @@
 const User = require('../models/User')
+const Blog = require('../models/Blog')
 const { hashPassword } = require('../utils/authUtils') // Đảm bảo đường dẫn đúng
 
 class UserController {
@@ -18,11 +19,33 @@ class UserController {
         }
     }
 
-    // [GET] /users/:id
-    async findById(req, res, next) {
+    async getManyUsers(req, res, next) {
+        try {
+            const { ids } = req.body // Sử dụng req.body thay vì req.query
+            if (!ids || !Array.isArray(ids)) {
+                return res.status(400).json({ error: 'Invalid or missing IDs' })
+            }
+
+            const objectIds = ids.map((id) => mongoose.Types.ObjectId(id))
+            const users = await User.find({ _id: { $in: objectIds } }).exec()
+
+            res.json({
+                data: users.map((user) => ({
+                    ...user.toObject(),
+                    id: user._id.toString(),
+                })),
+            })
+        } catch (error) {
+            console.error('Error fetching users:', error)
+            res.status(500).json({ error: 'Internal server error' })
+        }
+    }
+
+    // [GET] /users/:slug
+    async findBySlug(req, res, next) {
         try {
             const user = await User.findOne({
-                _id: req.params.id,
+                slug: req.params.slug,
                 is_activated: true,
             }).lean()
             if (!user) {
@@ -225,6 +248,31 @@ class UserController {
             next(error)
         }
     }
+
+    //[GET] /users/:id/blogs
+    async findAllUserBlogsByAdmin(req, res, next) {
+        try {
+            const { id } = req.params
+            const { is_activated } = req.query
+
+            const filter = { creator: id }
+
+            if (is_activated !== undefined) {
+                filter.is_activated = is_activated === 'true' 
+            }
+
+            const blogs = await Blog.find(filter).lean()
+
+            res.json(blogs)
+        } catch (error) {
+            next(error)
+        }
+    }
+
+    
+
+
+    
 }
 
 module.exports = new UserController()
