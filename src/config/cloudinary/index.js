@@ -46,8 +46,23 @@ const upload = multer({ storage: storage })
 // Hàm upload hình ảnh hoặc video lên Cloudinary từ file đã lưu trên disk
 async function uploadMedia(filePath, publicId) {
     try {
+        if (!fs.existsSync(filePath)) {
+            throw new Error('File does not exist');
+        }
+
+        const ext = path.extname(filePath).toLowerCase();
+        let resourceType = 'image'; // Mặc định là hình ảnh
+
+        if (['.mp4', '.avi', '.mov', '.mkv'].includes(ext)) {
+            resourceType = 'video'; // Nếu là video
+        }
+
+        console.log(`Uploading ${resourceType}: ${filePath}`);
+
+
         const uploadResult = await cloudinary.uploader.upload(filePath, {
             public_id: publicId,
+            resource_type: resourceType,
         })
 
         // Xóa file tạm sau khi upload lên Cloudinary
@@ -55,15 +70,25 @@ async function uploadMedia(filePath, publicId) {
 
         return uploadResult
     } catch (error) {
-        // Nếu có lỗi, xóa file tạm
-        fs.unlinkSync(filePath)
-        throw error
+        console.error('Error during upload or file deletion:', error);
+        
+        // Nếu có lỗi, xóa file tạm (đảm bảo rằng filePath tồn tại trước khi xóa)
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+        } catch (unlinkError) {
+            console.error('Error deleting file:', unlinkError);
+        }
+        
+        throw error;
     }
 }
 
 // Hàm lấy URL tối ưu hóa của hình ảnh hoặc video
-function getOptimizedUrl(publicId) {
+function getOptimizedUrl(publicId, resourceType = 'image') {
     return cloudinary.url(publicId, {
+        resource_type: resourceType, 
         fetch_format: 'auto',
         quality: 'auto',
     })

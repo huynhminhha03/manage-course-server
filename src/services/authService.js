@@ -30,11 +30,17 @@ async function authenticate(email, password) {
         throw error
     }
 
+    if (user.is_locked) {
+        const error = new Error('This account has been locked')
+        error.status = 403
+        throw error
+    }
+
     // Tạo token JWT với vai trò
     const token = jwt.sign(
         { id: user._id, role: roleUser.name },
         process.env.ACCESS_TOKEN_SECRET,
-        { expiresIn: '100h' }
+        { expiresIn: '5000h' }
     )
 
     return { token }

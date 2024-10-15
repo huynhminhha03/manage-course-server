@@ -11,7 +11,7 @@ class BookmarkController {
                 blog_id,
             })
 
-            if (existingBookmark) {
+            if (existingBookmark ) {
                 // Nếu bookmark đã tồn tại, xóa nó
                 await Bookmark.deleteOne(existingBookmark)
                 return res.json({ message: 'Bookmark removed' })
@@ -59,7 +59,7 @@ class BookmarkController {
             const [bookmarks, bookmarkCount] = await Promise.all([
                 Bookmark.find({ user_id }).lean().populate({
                     path: 'blog_id', 
-                    select: 'title',
+                    select: 'title is_deleted',
                     populate: {
                         path: 'creator', 
                         select: 'name' 

@@ -5,6 +5,8 @@ const userValidate = (data) => {
         name: Joi.string().required(),
         email: Joi.string().email(new RegExp('gmail.com')).required(),
         password: Joi.string().min(6).required(),
+        otp: Joi.string().min(6).required(),
+
     })
 
     return userSchema.validate(data)

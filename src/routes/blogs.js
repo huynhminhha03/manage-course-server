@@ -9,6 +9,8 @@ const { authRole } = require('../middlewares/authRole')
 // Rồi mình kiểm tra thông tin, rồi ẩn hiện hoặc xoá nó.
 
 //Mangage blog by admin, staff
+router.get('/count-all', authToken, authRole(['isAdmin', 'isStaff']), blogController.countBlogs)
+router.get('/results', authToken, authRole(['isAdmin', 'isStaff']), blogController.findByNameByAdmin)
 router.get('/', authToken, authRole(['isAdmin', 'isStaff']), blogController.findAllByAdmin)
 router.get('/:id', authToken, authRole(['isAdmin', 'isStaff']), blogController.findOneByAdmin)
 router.patch('/:id', authToken, authRole(['isAdmin', 'isStaff']), blogController.LockByAdmin)

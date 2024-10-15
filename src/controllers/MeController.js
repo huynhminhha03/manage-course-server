@@ -3,13 +3,37 @@ const Course = require('../models/Course')
 const Lesson = require('../models/Lesson')
 const User = require('../models/User')
 const Topic = require('../models/Topic')
-const {
-    uploadMedia,
-    getOptimizedUrl,
-    deleteMedia,
-} = require('../config/cloudinary')
+const UserCourse = require('../models/UserCourse')
+const { notifyUsersAboutNewLesson } = require('./NotificationController')
 
+const Order = require('../models/Order')
+const { uploadMedia, getOptimizedUrl } = require('../config/cloudinary')
+const fs = require('fs')
 const { formatPublicId } = require('../utils/cloudinaryUtils')
+const { getVideoDuration } = require('../utils/getVideoDuration')
+const WebSocket = require('ws');
+
+// Tạo WebSocket server
+const wss = new WebSocket.Server({ port: 8081 });
+
+// Khi một client kết nối đến server
+wss.on('connection', (ws) => {
+    console.log('Client connected');
+
+    ws.on('message', (message) => {
+        console.log('Received:', message);
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(message);
+            }
+        });
+    });
+
+    ws.on('close', () => {
+        console.log('Client disconnected');
+    });
+});
+
 
 class MeController {
     // [GET] /current-user
@@ -42,8 +66,23 @@ class MeController {
                 if (existingSlugUser) {
                     return res
                         .status(400)
-                        .json({ message: 'Slug already in use' })
+                        .json({ message: 'Tên người dùng đã được sử dụng.' })
                 }
+            }
+
+            let optimizedUrl = avatar // Giữ URL avatar hiện tại nếu không có ảnh mới
+            if (req.file) {
+                // Chỉ upload nếu có file mới được tải lên
+                const imageFilePath = req.file.path // Đường dẫn tới file ảnh/video đã lưu tạm thời
+                const publicId = `avatars/${slug || name}_${Date.now()}`
+                    .replace(/\s+/g, '_')
+                    .toLowerCase()
+
+                // Upload hình ảnh/video lên Cloudinary
+                await uploadMedia(imageFilePath, publicId)
+
+                // Lấy URL tối ưu hóa của hình ảnh/video
+                optimizedUrl = getOptimizedUrl(publicId)
             }
 
             // Cập nhật thông tin người dùng
@@ -52,7 +91,7 @@ class MeController {
                 {
                     name,
                     slug,
-                    avatar,
+                    avatar: optimizedUrl, // Cập nhật avatar nếu có
                     desc,
                 },
                 {
@@ -72,11 +111,44 @@ class MeController {
     }
 
     // [GET] /registered-courses
+    async showRegisteredCoursesByUserSlug(req, res, next) {
+        try {
+            const user = await User.findOne({ slug: req.params.slug }).lean()
+            const [paidCourses, freeCourses] = await Promise.all([
+                Order.find({ user_id: user._id }).populate('course_id').lean(),
+                UserCourse.find({ user_id: user._id })
+                    .populate('course_id')
+                    .lean(),
+            ])
+
+            const registeredCourses = [...paidCourses, ...freeCourses]
+
+            return res.json({
+                message: 'Danh sách khoá học đã đăng ký',
+                courses: registeredCourses,
+            })
+        } catch (error) {
+            next(error)
+        }
+    }
+
     async findRegisteredCourses(req, res, next) {
         try {
-            const user = await User.findById(req.params.id).lean()
+            const userId = req.user.id
 
-            res.json(user.registered_courses)
+            const [paidCourses, freeCourses] = await Promise.all([
+                Order.find({ user_id: userId }).populate('course_id').lean(),
+                UserCourse.find({ user_id: userId })
+                    .populate('course_id')
+                    .lean(),
+            ])
+
+            const registeredCourses = [...paidCourses, ...freeCourses]
+
+            return res.json({
+                message: 'Danh sách khoá học đã đăng ký',
+                courses: registeredCourses,
+            })
         } catch (error) {
             next(error)
         }
@@ -85,13 +157,15 @@ class MeController {
     // [GET] /my-courses
     async findMyCourses(req, res, next) {
         try {
-            const courses = await Course.find({ creator: req.user.id })
+            const courses = await Course.find({
+                creator: req.user.id,
+                is_deleted: false,
+            })
                 .lean()
                 .sort({ createdAt: -1 })
             if (!courses) {
                 return res.status(404).json({ message: 'Course not found' })
             }
-            console.log(courses)
             res.json(courses)
         } catch (error) {
             next(error)
@@ -104,11 +178,23 @@ class MeController {
             const course = await Course.findOne({
                 creator: req.user.id,
                 _id: req.params.id,
+                is_deleted: false,
             }).lean()
             if (!course) {
                 return res.status(404).json({ message: 'Course not found' })
             }
-            res.json(course)
+            let count
+            if (course.is_free) {
+                count = await UserCourse.countDocuments({
+                    course_id: req.params.id,
+                })
+            } else {
+                count = await Order.countDocuments({ course_id: req.params.id })
+            }
+            res.json({
+                course,
+                count,
+            })
         } catch (error) {
             next(error)
         }
@@ -117,7 +203,7 @@ class MeController {
     // [POST] /my-courses
     async createMyCourse(req, res, next) {
         try {
-            const { title, desc, start_time, price, isFree } = req.body
+            const { title, desc, start_time, price, is_free } = req.body
 
             const imageFilePath = req.file.path // Đường dẫn tới file hình ảnh/video đã được lưu tạm thời
             const publicId = `courses/${formatPublicId(title).replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`
@@ -134,7 +220,7 @@ class MeController {
                 desc,
                 start_time,
                 price,
-                isFree,
+                is_free,
                 creator: req.user.id,
             })
             const savedCourse = await course.save()
@@ -149,14 +235,35 @@ class MeController {
 
     // [PATCH] /my-courses/:id
     async updateMyCourse(req, res, next) {
-        const { title, image_url, desc, price, isFree, start_time } = req.body
+        const { title, desc, price, is_free, start_time } = req.body
+
+        // Khởi tạo biến để chứa URL hình ảnh/video
+        let optimizedUrl
+
+        if (req.file) {
+            // Nếu có file được tải lên, tiến hành upload và lấy URL tối ưu hóa
+            const imageFilePath = req.file.path // Đường dẫn tới file hình ảnh/video đã được lưu tạm thời
+            const publicId = `courses/${formatPublicId(title).replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`
+
+            // Upload hình ảnh/video lên Cloudinary
+            await uploadMedia(imageFilePath, publicId)
+
+            // Lấy URL tối ưu hóa của hình ảnh/video
+            optimizedUrl = getOptimizedUrl(publicId)
+        }
+
+        // Tạo đối tượng cập nhật
         const updateFields = {
             title,
-            image_url,
             desc,
             price,
-            isFree,
+            is_free,
             start_time,
+        }
+
+        // Chỉ thêm image_url nếu có file được tải lên
+        if (optimizedUrl) {
+            updateFields.image_url = optimizedUrl
         }
 
         try {
@@ -167,8 +274,8 @@ class MeController {
                 },
                 updateFields,
                 {
-                    new: true, // Trả về tài liệu đã được cập nhật
-                    runValidators: true, // Chạy các trình xác thực
+                    new: true,
+                    runValidators: true,
                 }
             ).lean()
 
@@ -191,7 +298,7 @@ class MeController {
                     _id: req.params.id,
                 },
                 {
-                    is_activated: false,
+                    is_deleted: true,
                 }
             ).lean()
             if (!course) {
@@ -210,13 +317,10 @@ class MeController {
             const lessons = await Lesson.find({
                 creator: req.user.id,
                 course_id: req.params.course_id,
-            }).lean()
-
-            if (!lessons.length) {
-                return res
-                    .status(404)
-                    .json({ message: 'No lessons found for this course' })
-            }
+                is_deleted: false,
+            })
+                .lean()
+                .sort({ createdAt: -1 })
 
             res.json(lessons)
         } catch (error) {
@@ -231,6 +335,7 @@ class MeController {
                 course_id: req.params.course_id,
                 _id: req.params.lesson_id,
                 creator: req.user.id,
+                is_deleted: false,
             }).lean()
 
             if (!lesson) {
@@ -246,20 +351,56 @@ class MeController {
     // [POST] /my-courses/:course_id/lessons
     async createLesson(req, res, next) {
         try {
-            const { title, video_url, is_activated } = req.body
+            const { title } = req.body
+            const courseId = req.params.course_id
 
-            // Tạo bài học mới
+            const course = await Course.findById(courseId)
+
+            const videoFilePath = req.file.path
+
+            // Kiểm tra sự tồn tại của tệp video
+            if (!fs.existsSync(videoFilePath)) {
+                return res
+                    .status(400)
+                    .json({ message: 'Video file does not exist' })
+            }
+
+            // Đặt public ID cho video trên Cloudinary
+            const publicId = `lessons/${formatPublicId(title).replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`
+
+            // Upload video lên Cloudinary và lấy URL tối ưu hóa
+            const [uploadResult, duration] = await Promise.all([
+                uploadMedia(videoFilePath, publicId),
+                getVideoDuration(videoFilePath),
+            ])
+
+            const optimizedUrl = getOptimizedUrl(publicId, 'video')
+
+            // Tạo một đối tượng Lesson mới và lưu vào cơ sở dữ liệu
             const newLesson = new Lesson({
                 title,
-                video_url,
-                is_activated,
+                duration,
+                video_url: optimizedUrl,
                 course_id: req.params.course_id,
                 creator: req.user.id,
             })
 
             await newLesson.save()
+
+            await notifyUsersAboutNewLesson(newLesson, course)
+
+            // Xóa tệp video tạm sau khi lưu vào cơ sở dữ liệu
+            if (fs.existsSync(videoFilePath)) {
+                fs.unlinkSync(videoFilePath)
+            } else {
+                console.warn(
+                    `File does not exist for deletion: ${videoFilePath}`
+                )
+            }
+
             res.status(201).json(newLesson)
         } catch (error) {
+            console.error('Error in createLesson:', error)
             next(error)
         }
     }
@@ -267,9 +408,29 @@ class MeController {
     // [PATCH] /my-courses/:courseId/lessons/:lesson_id
     async updateLesson(req, res, next) {
         try {
-            const { title, video_url, is_activated } = req.body
+            const { title } = req.body
 
-            const updateFields = { title, video_url, is_activated }
+            // Khởi tạo biến để chứa URL hình ảnh/video
+            let optimizedUrl
+
+            if (req.file) {
+                // Nếu có file được tải lên, tiến hành upload và lấy URL tối ưu hóa
+                const imageFilePath = req.file.path // Đường dẫn tới file hình ảnh/video đã được lưu tạm thời
+                const publicId = `lessons/${formatPublicId(title).replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`
+
+                // Upload hình ảnh/video lên Cloudinary
+                await uploadMedia(imageFilePath, publicId)
+
+                // Lấy URL tối ưu hóa của hình ảnh/video
+                optimizedUrl = getOptimizedUrl(publicId, 'video')
+            }
+
+            const updateFields = { title }
+
+            // Chỉ thêm image_url nếu có file được tải lên
+            if (optimizedUrl) {
+                updateFields.video_url = optimizedUrl
+            }
 
             const lesson = await Lesson.findOneAndUpdate(
                 {
@@ -294,11 +455,17 @@ class MeController {
     // [DELETE] /my-courses/:courseId/lessons/:lesson_id
     async deleteLesson(req, res, next) {
         try {
-            const lesson = await Lesson.findOneAndDelete({
-                _id: req.params.lesson_id,
-                course_id: req.params.course_id,
-                creator: req.user.id,
-            }).lean()
+            const lesson = await Lesson.findOneAndUpdate(
+                {
+                    _id: req.params.lesson_id,
+                    course_id: req.params.course_id,
+                    creator: req.user.id,
+                },
+                {
+                    is_deleted: true,
+                    deletedAt: new Date(),
+                }
+            ).lean()
 
             if (!lesson) {
                 return res.status(404).json({ message: 'Lesson not found' })
@@ -317,11 +484,11 @@ class MeController {
 
             // Tạo các promises cho việc tìm danh sách blog và đếm số lượng blog
             const [blogs, blogCount] = await Promise.all([
-                Blog.find({ creator: user_id, is_activated: true })
+                Blog.find({ creator: user_id, is_deleted: false })
                     .lean()
                     .populate('creator', 'name')
                     .sort({ updatedAt: -1 }),
-                Blog.countDocuments({ creator: user_id, is_activated: true }),
+                Blog.countDocuments({ creator: user_id, is_deleted: false }),
             ])
 
             // Trả về danh sách blog cùng số lượng
@@ -341,7 +508,7 @@ class MeController {
             const blogs = await Blog.findOne({
                 creator: req.user.id,
                 _id: req.params.id,
-                is_activated: true,
+                is_deleted: false,
             })
                 .lean()
                 .populate('topic_id', 'slug')
@@ -439,7 +606,8 @@ class MeController {
                     _id: req.params.id,
                 },
                 {
-                    is_activated: false,
+                    is_deleted: true,
+                    deleted_At: new Date(),
                 }
             ).lean()
 
@@ -448,6 +616,36 @@ class MeController {
             }
 
             res.status(204).end()
+        } catch (error) {
+            next(error)
+        }
+    }
+    async sendNotification(req, res, next) {
+        try {
+            const { message } = req.body;
+            console.log(message)
+            if (!message) {
+                return res.status(400).json({ message: 'Message is required' })
+            }
+
+            // Gửi thông báo đến tất cả client kết nối
+            // Get the current date
+            const dateSent = new Date().toISOString() // Format date as ISO string
+
+            // Create the message object with date
+            const notification = {
+                message,
+                dateSent,
+            }
+
+            // Gửi thông báo đến tất cả client kết nối
+            wss.clients.forEach((client) => {
+                if (client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify(notification))
+                }
+            })
+
+            res.status(200).json({ message: 'Notification sent' })
         } catch (error) {
             next(error)
         }

@@ -8,6 +8,7 @@ const { authRole } = require('../middlewares/authRole')
 //Get, Patch Current User
 router.get('/admin/dashboard', authToken,authRole(['isAdmin', 'isStaff']), meController.getCurrentUser);
 router.patch('/current-user', authToken, meController.updateCurrentUser);
+router.post('/send-notification', authToken,authRole(['isAdmin']),  meController.sendNotification);
 
 // Manage My Blogs by all Users
 router.get('/my-blogs', authToken, meController.findMyBlogs);

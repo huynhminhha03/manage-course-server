@@ -129,31 +129,39 @@ class CommentController {
     // [PATCH] /comments/:id/admin
     async updateCommentByAdmin(req, res, next) {
         try {
-            const { id } = req.params
-            const { is_activated } = req.body
+            const { id } = req.params;
+            const { is_activated } = req.body;
+    
+            // Update parent comment
             const updateFields = {
                 is_activated,
                 activated_by: req.user.id,
-            }
-
+            };
+    
             const updatedComment = await Comment.findByIdAndUpdate(
                 id,
                 updateFields,
                 { new: true }
-            ).lean()
-
+            ).lean();
+    
             if (!updatedComment) {
-                return res
-                    .status(404)
-                    .json({ message: 'Comment không tồn tại' })
+                return res.status(404).json({ message: 'Comment không tồn tại' });
             }
-
-            res.json(updatedComment)
+    
+            // Nếu comment là comment cha và bị unactivated, update các comment con
+            if (!is_activated) {
+                await Comment.updateMany(
+                    { parent_id: id }, // Tìm tất cả các comment con của comment cha
+                    { is_activated: false, activated_by: req.user.id } // Cập nhật trạng thái của các comment con
+                );
+            }
+    
+            res.json(updatedComment);
         } catch (error) {
-            next(error)
+            next(error);
         }
     }
-
+    
     // [DELETE] /comments/:id/admin
     async deleteCommentByAdmin(req, res, next) {
         try {

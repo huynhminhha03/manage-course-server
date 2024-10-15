@@ -1,21 +1,77 @@
 const Lesson = require('../models/Lesson')
 const Comment = require('../models/Comment')
 
-
 class LessonController {
-
     //Manage by Admin
+    //[GET] /lessons/results
+    async findByName(req, res, next) {
+        try {
+            const filter = { is_deleted: false }
+
+            if (req.query.search) {
+                filter.title = { $regex: req.query.search, $options: 'i' }
+            }
+
+            const lessons = await Lesson.find(filter).lean()
+            console.log(lessons)
+            res.json(lessons)
+        } catch (error) {
+            next(error)
+        }
+    }
+
+    //[GET] /lessons/count-all
+    async countLessons(req, res, next) {
+        try {
+            const filter = { is_deleted: false }
+            const totalLessons = await Lesson.countDocuments(filter)
+
+            res.json({
+                total: totalLessons,
+            })
+        } catch (error) {
+            next(error)
+        }
+    }
+
     // [GET] /lessons
     async findAll(req, res, next) {
         try {
-            const filter = {}
+            const filter = { is_deleted: false }
 
             if (req.query.is_locked !== undefined) {
                 filter.is_locked = req.query.is_locked
             }
+            if (req.query.search) {
+                filter.title = { $regex: req.query.search, $options: 'i' }
+            }
+            const page = parseInt(req.query.page) || 1
+            const limit = parseInt(req.query.limit) || 10
+            const skip = (page - 1) * limit
 
-            const lessons = await Lesson.find(filter).lean()
-            res.json(lessons)
+            const [lessons, total] = await Promise.all([
+                Lesson.find(filter)
+                    .skip(skip)
+                    .limit(limit)
+                    .lean()
+                    .populate({
+                        path: 'creator',
+                        select: 'name slug avatar',
+                    })
+                    .populate({
+                        path: 'course_id',
+                        select: 'title',
+                    })
+                    .sort({ createdAt: -1 }),
+                Lesson.countDocuments(filter),
+            ])
+
+            res.json({
+                data: lessons,
+                total: total,
+                page: page,
+                limit: limit,
+            })
         } catch (error) {
             next(error)
         }
@@ -24,7 +80,8 @@ class LessonController {
     // [GET] /lessons/:lesson_id
     async findById(req, res, next) {
         try {
-            const lesson = await Lesson.findById(req.params.lesson_id).lean()
+            const filter = { is_deleted: false, _id: req.params.lesson_id }
+            const lesson = await Lesson.findOne(filter).lean()
             if (!lesson) {
                 return res.status(404).json({ message: 'Lesson not found' })
             }
@@ -59,7 +116,9 @@ class LessonController {
     // [DELETE] /lessons/:lesson_id
     async delete(req, res, next) {
         try {
-            const lesson = await Lesson.findByIdAndDelete(req.params.lesson_id).lean()
+            const lesson = await Lesson.findByIdAndDelete(
+                req.params.lesson_id
+            ).lean()
             if (!lesson) {
                 return res.status(404).json({ message: 'Lesson not found' })
             }
@@ -105,6 +164,20 @@ class LessonController {
         }
     }
 
+    async countAllCommentsLesson(req, res, next) {
+        try {
+            const blog_id = req.params.blog_id
+
+            const total_comments = await Comment.countDocuments({
+                target_id: blog_id,
+                target_type: 'Lesson',
+            })
+
+            res.json({ total_comments })
+        } catch (error) {
+            console.log(error)
+        }
+    }
 }
 
 module.exports = new LessonController()

@@ -6,7 +6,10 @@ const { authToken } = require('../middlewares/authToken')
 const { authRole } = require('../middlewares/authRole')
 
 
+router.get('/count-all', authToken, authRole(['isAdmin', 'isStaff']), courseController.countCourses)
+router.get('/statistics/yearly/:year', authToken, authRole(['isAdmin', 'isStaff']), courseController.getStatisticsForYear)
 router.get('/', authToken, authRole(['isAdmin', 'isStaff']), courseController.findAllByAdmin)
+router.get('/results', authToken, authRole(['isAdmin', 'isStaff']), courseController.findNameCourseByAdmin)
 router.get('/:course_id', authToken, authRole(['isAdmin', 'isStaff']), courseController.findCourseByAdmin)
 router.patch('/:course_id', authToken, authRole(['isAdmin', 'isStaff']), courseController.updateByAdmin)
 router.delete('/:course_id', authToken, authRole(['isAdmin']), courseController.deleteByAdmin)

@@ -42,7 +42,7 @@ class LikeController {
         try {
             const user_id = req.user.id;
             const filter = { target_id, target_type,user_id };
-            const hasLiked = await Like.findOne(filter); // populate để lấy thông tin người dùng
+            const hasLiked = await Like.findOne(filter);
 
             return res.status(200).json({
                 hasLiked: !!hasLiked,

@@ -12,21 +12,14 @@ const UserSchema = new Schema(
         desc: { type: String },
         role_id: { type: Schema.Types.ObjectId, ref: 'Role' },
         is_activated: { type: Boolean, default: true },
-        locked_by: { type: Schema.Types.ObjectId, ref: 'User', default: null },
         slug: { type: String, slug: 'name', unique: true },
-        resetPasswordToken: { type: String },
-        resetPasswordExpires: { type: Date },
+       
     },
     {
         timestamps: true,
     }
 )
 
-// Thêm phương pháp setter
-UserSchema.methods.setResetPasswordToken = function (token, expires) {
-    this.resetPasswordToken = token
-    this.resetPasswordExpires = expires
-}
 
 // Add plugins
 mongoose.plugin(slug)

@@ -8,7 +8,8 @@ const { authToken } = require('../../middlewares/authToken')
 
 
 //comments Blog
-router.get('/topics/:topic_slug', blogController.findByTopicSlug)
+router.get('/results', blogController.findByName)
+router.get('/topics/:topic_slug', blogController.findByTopicSlug);
 router.get('/:blog_id/others', blogController.findOtherBlogsByUser);
 router.post('/:blog_id/bookmarks', authToken, BookmarkController.toggleBookmark);
 router.get('/:blog_id/bookmarks/checked',authToken, BookmarkController.checkBookmark);

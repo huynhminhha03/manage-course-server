@@ -3,6 +3,39 @@ const Comment = require('../models/Comment')
 const Topic = require('../models/Topic')
 
 class BlogController {
+
+    //[GET] /blogs
+    async countBlogs(req, res, next) {
+        try {
+            const filter = { is_deleted: false }
+            const totalBlogs = await Blog.countDocuments(filter)
+
+            res.json({
+                total: totalBlogs,
+            })
+        } catch (error) {
+            next(error)
+        }
+    }
+
+
+    async findByName(req, res, next) {
+        try {
+            const title = req.query.title || ''
+
+            let filter = {
+                title: { $regex: title, $options: 'i' },
+                is_deleted: false,
+                is_locked: false,
+            }
+
+            const blogs = await Blog.find(filter).lean()
+            res.json(blogs)
+        } catch (error) {
+            next(error)
+        }
+    }
+
     //[GET]/blogs/
     async findAll(req, res, next) {
         try {
@@ -14,7 +47,7 @@ class BlogController {
             // Tìm các blog với phân trang
             const [blogs, total] = await Promise.all([
                 Blog.find({
-                    is_activated: true,
+                    is_deleted: false,
                     is_locked: false,
                 })
                     .skip(skip)
@@ -22,10 +55,10 @@ class BlogController {
                     .lean()
                     .populate({
                         path: 'creator',
-                        select: 'name slug',
+                        select: 'name slug avatar',
                     }).sort({ createdAt: -1 }),
                 Blog.countDocuments({
-                    is_activated: true,
+                    is_deleted: false,
                     is_locked: false,
                 }),
             ])
@@ -41,15 +74,16 @@ class BlogController {
         }
     }
 
-    //[GET] /blogs/blog_id/other-blogs
+    //[GET] /blogs/:blog_id/other-blogs
     async findOtherBlogsByUser(req, res, next) {
         try {
             const { blog_id } = req.params
 
             const blog = await Blog.findById(blog_id).lean()
 
+            
             const otherBlogs = await Blog.find({
-                is_activated: true,
+                is_deleted: false,
                 is_locked: false,
                 creator: blog.creator,
                 _id: { $ne: blog_id },
@@ -86,7 +120,7 @@ class BlogController {
             const [blogs, total] = await Promise.all([
                 Blog.find({
                     topic_id,
-                    is_activated: true,
+                    is_deleted: false,
                     is_locked: false,
                 })
                     .skip(skip)
@@ -98,7 +132,7 @@ class BlogController {
                     }).sort({ createdAt: -1 }),
                 Blog.countDocuments({
                     topic_id,
-                    is_activated: true,
+                    is_deleted: false,
                     is_locked: false,
                 }),
             ])
@@ -120,7 +154,7 @@ class BlogController {
             const blogs = await Blog.findOne({
                 _id: req.params.id,
                 is_locked: false,
-                is_activated: true,
+                is_deleted: false,
             })
                 .lean()
                 .populate({
@@ -133,10 +167,26 @@ class BlogController {
         }
     }
 
+    async findByNameByAdmin(req, res, next) {
+        try {
+            const title = req.query.title || ''
+            console.log('title', title);
+            let filter = {
+                title: { $regex: title, $options: 'i' },
+                is_deleted: false,
+            }
+
+            const blogs = await Blog.find(filter).lean()
+            res.json(blogs)
+        } catch (error) {
+            next(error)
+        }
+    }
+
     // [GET] /blogs
     async findAllByAdmin(req, res, next) {
         try {
-            const filter = {}
+            const filter = {is_deleted: false}
 
             if (req.query.is_locked !== undefined) {
                 filter.is_locked = req.query.is_locked
@@ -148,7 +198,13 @@ class BlogController {
             const skip = (page - 1) * limit
 
             const [blogs, total] = await Promise.all([
-                Blog.find(filter).skip(skip).limit(limit).lean().sort({ createdAt: -1 }),
+                Blog.find(filter).skip(skip).limit(limit).lean().populate({
+                    path: 'creator',
+                    select: 'name',
+                }).populate({
+                    path: 'topic_id',
+                    select: 'name',
+                }).sort({ createdAt: -1 }),
                 Blog.countDocuments(filter),
             ])
 
@@ -183,7 +239,6 @@ class BlogController {
 
         const updateFields = {
             is_locked,
-            locked_by: req.user.id,
         }
 
         try {
@@ -230,6 +285,7 @@ class BlogController {
                     target_id: blog_id,
                     target_type: 'Blog',
                     parent_id: null,
+                    is_activated: true
                 })
                     .lean()
                     .populate({
@@ -240,6 +296,7 @@ class BlogController {
                 Comment.countDocuments({
                     target_id: blog_id,
                     target_type: 'Blog',
+                    is_activated: true
                 }),
             ])
 
@@ -261,6 +318,7 @@ class BlogController {
             const total_comments = await Comment.countDocuments({
                 target_id: blog_id,
                 target_type: 'Blog',
+                is_activated: true
             })
 
             res.json({ total_comments })
@@ -279,6 +337,7 @@ class BlogController {
                 target_id: blog_id,
                 target_type: 'Blog',
                 parent_id,
+                is_activated: true
             })
                 .lean()
                 .populate({
@@ -302,6 +361,7 @@ class BlogController {
                 target_id: blog_id,
                 target_type: 'Blog',
                 parent_id,
+                is_activated: true
             }).lean()
 
             res.json({ count })
